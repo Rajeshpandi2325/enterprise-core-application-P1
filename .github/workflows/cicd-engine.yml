@@ -1,0 +1,96 @@
+name: Enterprise Multi-Env DevOps Pipeline
+
+on:
+  push:
+    branches: [ dev, qa, main ]
+
+jobs:
+  devsecops-lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code Engine
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Map Runtime Target Environment Context
+      run: |
+        if [ "${{ github.ref_name }}" = "main" ]; then
+          echo "TARGET_ENV=prod" >> $GITHUB_ENV
+        elif [ "${{ github.ref_name }}" = "qa" ]; then
+          echo "TARGET_ENV=qa" >> $GITHUB_ENV
+        else
+          echo "TARGET_ENV=dev" >> $GITHUB_ENV
+        fi
+
+    # 1. SONARQUBE ANALYSIS CODE QUALITY GATE
+    - name: Run SonarCloud Static Code Analysis
+      uses: SonarSource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+    # 2. OWASP DEPENDENCY CHECK LOOP
+    - name: Execute OWASP Dependency-Check Scan
+      uses: snyk/actions/node@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }} # Free vulnerability token equivalent standard mapping
+
+    # 3. TRIVY FILE SYSTEM STATIC CYBER SCAN
+    - name: Run Trivy File System Security Assessment
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+        exit-code: '0'
+        severity: 'HIGH,CRITICAL'
+
+    # 4. CONTAINER IMAGE ASSEMBLY CREATION LAYER
+    - name: Log in to Docker Hub Registry
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and Push Microservice Artifact Modules
+      run: |
+        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/realtime-backend:${{ env.TARGET_ENV }}-${{ github.sha }} ./backend
+        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/realtime-frontend:${{ env.TARGET_ENV }}-${{ github.sha }} ./frontend
+
+    # 5. TRIVY IMAGE BINARY ARTIFACT SCAN
+    - name: Run Trivy Container Security Audit Over Backend Module
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/realtime-backend:${{ env.TARGET_ENV }}-${{ github.sha }}'
+        format: 'table'
+        exit-code: '0'
+
+    - name: Publish Images to Central Docker Hub Registry
+      run: |
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/realtime-backend:${{ env.TARGET_ENV }}-${{ github.sha }}
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/realtime-frontend:${{ env.TARGET_ENV }}-${{ github.sha }}
+
+    # 6. DYNAMIC PRODUCTION DEPLOYMENT LOOP INTO AMAZON ECS
+    - name: Configure AWS Administrative Context Permissions
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Render AWS ECS Task Definition Specifications & Execute Rolling Release
+      run: |
+        # Bypasses EKS constraints by registering Task Definitions natively on ECS Container Cluster Hosts
+        CLUSTER_NAME="${{ env.TARGET_ENV }}-ecs-cluster"
+        DB_CONN_STR="postgresql://db_admin:VaultSecurePassword123!@enterprise-${{ env.TARGET_ENV }}://amazonaws.com{{ env.TARGET_ENV }}_db"
+        
+        echo "Registering Task Defs and triggering deployment for Cluster: $CLUSTER_NAME"
+        
+        # 1. Register and Run Backend Task Execution Configuration Definition Frame
+        aws ecs register-task-definition --family "${{ env.TARGET_ENV }}-backend" --network-mode "host" --container-definitions "[{\"name\":\"backend\",\"image\":\"${{ secrets.DOCKERHUB_USERNAME }}/realtime-backend:${{ env.TARGET_ENV }}-${{ github.sha }}\",\"memory\":512,\"cpu\":256,\"essential\":true,\"environment\":[{\"name\":\"APP_ENV\",\"value\":\"${{ env.TARGET_ENV }}\"},{\"name\":\"DATABASE_URL\",\"value\":\"$DB_CONN_STR\"}]}]"
+        aws ecs update-service --cluster $CLUSTER_NAME --service "backend-service" --task-definition "${{ env.TARGET_ENV }}-backend" --force-new-deployment || aws ecs create-service --cluster $CLUSTER_NAME --service "backend-service" --task-definition "${{ env.TARGET_ENV }}-backend" --desired-count 1
+
+        # 2. Register and Run Frontend Task Execution Configuration Definition Frame
+        aws ecs register-task-definition --family "${{ env.TARGET_ENV }}-frontend" --network-mode "host" --container-definitions "[{\"name\":\"frontend\",\"image\":\"${{ secrets.DOCKERHUB_USERNAME }}/realtime-frontend:${{ env.TARGET_ENV }}-${{ github.sha }}\",\"memory\":512,\"cpu\":256,\"essential\":true}]"
+        aws ecs update-service --cluster $CLUSTER_NAME --service "frontend-service" --task-definition "${{ env.TARGET_ENV }}-frontend" --force-new-deployment || aws ecs create-service --cluster $CLUSTER_NAME --service "frontend-service" --task-definition "${{ env.TARGET_ENV }}-frontend" --desired-count 1
