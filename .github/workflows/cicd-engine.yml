@@ -31,10 +31,21 @@ jobs:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     # 2. OWASP DEPENDENCY CHECK LOOP
-    - name: Execute OWASP Dependency-Check Scan
+    - name: Run Snyk Open Source Vulnerability Scan (Backend)
       uses: snyk/actions/node@master
+      with:
+        command: test
+        args: --file=backend/package.json
       env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }} # Free vulnerability token equivalent standard mapping
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+    - name: Run Snyk Open Source Vulnerability Scan (Frontend)
+      uses: snyk/actions/node@master
+      with:
+        command: test
+        args: --file=frontend/package.json
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
     # 3. TRIVY FILE SYSTEM STATIC CYBER SCAN
     - name: Run Trivy File System Security Assessment
