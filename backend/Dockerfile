@@ -2,7 +2,8 @@
 FROM node:18-alpine AS dependencies
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --only=production
+# FIXED: Using install loop to handle bare manifest definitions without lockfiles
+RUN npm install --omit=dev
 
 # Stage 2: Build the hardened production runtime container
 FROM node:18-alpine
