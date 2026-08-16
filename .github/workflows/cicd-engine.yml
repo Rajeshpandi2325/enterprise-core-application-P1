@@ -23,15 +23,14 @@ jobs:
           echo "TARGET_ENV=dev" >> $GITHUB_ENV
         fi
 
-    # 1. SONARQUBE ANALYSIS CODE QUALITY GATE
+    # 1. CODE INTEGRITY STATIC ANALYSIS
     - name: Run SonarCloud Static Code Analysis
-      uses: SonarSource/sonarcloud-github-action@master
+      uses: SonarSource/sonarqube-scan-action@master
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    # 2. OWASP DEPENDENCY CHECK LOOP
-    # 2. FIXED: RUNNING NATIVE MULTI-DIRECTORY SCA SCANNING BYPASSING CONTAINER LIMITATIONS
+    # 2. FIXED: NATIVE TERMINAL MULTI-DIRECTORY DEPENDENCY SCANS (BYPASSES DOCKER ENGINE RESET)
     - name: Set up Node.js Environment
       uses: actions/setup-node@v4
       with:
@@ -41,16 +40,15 @@ jobs:
       run: |
         npm install -g snyk
         
-        echo "=== SCANNING BACKEND DEPENDENCIES ==="
+        echo "=== SCANNING BACKEND CORES ==="
         cd backend
         snyk test --file=package.json || true
         
-        echo "=== SCANNING FRONTEND DEPENDENCIES ==="
+        echo "=== SCANNING FRONTEND CORES ==="
         cd ../frontend
         snyk test --file=package.json || true
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-
 
     # 3. TRIVY FILE SYSTEM STATIC CYBER SCAN
     - name: Run Trivy File System Security Assessment
@@ -87,7 +85,7 @@ jobs:
         docker push ${{ secrets.DOCKERHUB_USERNAME }}/realtime-backend:${{ env.TARGET_ENV }}-${{ github.sha }}
         docker push ${{ secrets.DOCKERHUB_USERNAME }}/realtime-frontend:${{ env.TARGET_ENV }}-${{ github.sha }}
 
-    # 6. DYNAMIC PRODUCTION DEPLOYMENT LOOP INTO AMAZON ECS
+    # 6. DYNAMIC DEPLOYMENT LOOP INTO LIVE AMAZON ECS CLUSTERS
     - name: Configure AWS Administrative Context Permissions
       uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -97,16 +95,15 @@ jobs:
 
     - name: Render AWS ECS Task Definition Specifications & Execute Rolling Release
       run: |
-        # Bypasses EKS constraints by registering Task Definitions natively on ECS Container Cluster Hosts
         CLUSTER_NAME="${{ env.TARGET_ENV }}-ecs-cluster"
         DB_CONN_STR="postgresql://db_admin:VaultSecurePassword123!@enterprise-${{ env.TARGET_ENV }}://amazonaws.com{{ env.TARGET_ENV }}_db"
         
         echo "Registering Task Defs and triggering deployment for Cluster: $CLUSTER_NAME"
         
-        # 1. Register and Run Backend Task Execution Configuration Definition Frame
+        # Register and Run Backend Task Execution Configuration Definition Frame
         aws ecs register-task-definition --family "${{ env.TARGET_ENV }}-backend" --network-mode "host" --container-definitions "[{\"name\":\"backend\",\"image\":\"${{ secrets.DOCKERHUB_USERNAME }}/realtime-backend:${{ env.TARGET_ENV }}-${{ github.sha }}\",\"memory\":512,\"cpu\":256,\"essential\":true,\"environment\":[{\"name\":\"APP_ENV\",\"value\":\"${{ env.TARGET_ENV }}\"},{\"name\":\"DATABASE_URL\",\"value\":\"$DB_CONN_STR\"}]}]"
         aws ecs update-service --cluster $CLUSTER_NAME --service "backend-service" --task-definition "${{ env.TARGET_ENV }}-backend" --force-new-deployment || aws ecs create-service --cluster $CLUSTER_NAME --service "backend-service" --task-definition "${{ env.TARGET_ENV }}-backend" --desired-count 1
 
-        # 2. Register and Run Frontend Task Execution Configuration Definition Frame
+        # Register and Run Frontend Task Execution Configuration Definition Frame
         aws ecs register-task-definition --family "${{ env.TARGET_ENV }}-frontend" --network-mode "host" --container-definitions "[{\"name\":\"frontend\",\"image\":\"${{ secrets.DOCKERHUB_USERNAME }}/realtime-frontend:${{ env.TARGET_ENV }}-${{ github.sha }}\",\"memory\":512,\"cpu\":256,\"essential\":true}]"
         aws ecs update-service --cluster $CLUSTER_NAME --service "frontend-service" --task-definition "${{ env.TARGET_ENV }}-frontend" --force-new-deployment || aws ecs create-service --cluster $CLUSTER_NAME --service "frontend-service" --task-definition "${{ env.TARGET_ENV }}-frontend" --desired-count 1
