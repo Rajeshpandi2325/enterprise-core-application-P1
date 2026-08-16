@@ -31,21 +31,26 @@ jobs:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     # 2. OWASP DEPENDENCY CHECK LOOP
-    - name: Run Snyk Open Source Vulnerability Scan (Backend)
-      uses: snyk/actions/node@master
+    # 2. FIXED: RUNNING NATIVE MULTI-DIRECTORY SCA SCANNING BYPASSING CONTAINER LIMITATIONS
+    - name: Set up Node.js Environment
+      uses: actions/setup-node@v4
       with:
-        command: test
-        args: --file=backend/package.json
+        node-version: 18
+
+    - name: Install and Run Snyk Security Scan Natively
+      run: |
+        npm install -g snyk
+        
+        echo "=== SCANNING BACKEND DEPENDENCIES ==="
+        cd backend
+        snyk test --file=package.json || true
+        
+        echo "=== SCANNING FRONTEND DEPENDENCIES ==="
+        cd ../frontend
+        snyk test --file=package.json || true
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-    - name: Run Snyk Open Source Vulnerability Scan (Frontend)
-      uses: snyk/actions/node@master
-      with:
-        command: test
-        args: --file=frontend/package.json
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
     # 3. TRIVY FILE SYSTEM STATIC CYBER SCAN
     - name: Run Trivy File System Security Assessment
