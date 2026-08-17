@@ -2,7 +2,8 @@
 FROM node:18-alpine AS build-engine
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+# FIXED: Swapping clean-install for normal install to handle bare package manifests
+RUN npm install
 COPY . .
 RUN npm run build
 
